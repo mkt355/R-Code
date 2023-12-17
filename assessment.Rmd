@@ -1,0 +1,114 @@
+---
+title: "Assessment"
+author: "Student ID 2935413"
+date: "2023-11-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(haven)
+library(kableExtra)
+```
+
+```{r read-data}
+# loading the dataset
+background_var <- read_dta("data/background_variables.dta")
+outcomes <- read_dta("data/outcomes.dta")
+treatment_assign <- read_dta("data/treatment_assignment.dta")
+```
+
+```{r data-manipulation}
+# checking the datatypes and snippet of each variable in a dataset
+glimpse(background_var)
+glimpse(outcomes)
+glimpse(treatment_assign)
+
+# merging the three datasets together using household_ID
+data <- left_join(outcomes, background_var, by = "household_ID")
+
+data <- left_join(data, treatment_assign, by ="household_ID")
+
+glimpse(data)
+```
+
+```{r balance-check}
+# adding treatment_group column to background_var to conduct balance check
+background_var$treatment_group <- treatment_assign$treatment_group[match(background_var$household_ID, treatment_assign$household_ID)]
+
+# conducting balance check on the background variables
+balance_check <- background_var |>
+  group_by(treatment_group)|>
+  select(-household_ID) |>
+  pivot_longer(cols = "origin_forecast_kravg30_p25" : "college_plus", names_to = "Background_variables", values_to = "Values")
+
+# tidying and manipulating the data to display balance check table
+balance_check_tidy <- balance_check |>
+  group_by(treatment_group, Background_variables) |>
+  summarize (across(everything(), list(N = ~n(), 
+                                   Mean = ~mean(., na.rm = TRUE), 
+                                   sd = ~sd(., na.rm = TRUE))))|>
+  pivot_wider(names_from = treatment_group, values_from = c("Values_N", "Values_Mean", "Values_sd")) |>
+  select(Background_variables, Values_N_0, Values_Mean_0, Values_sd_0,
+         Values_N_1,Values_Mean_1, Values_sd_1)
+
+# creating a balance check table 
+background_table <- balance_check_tidy |>
+  kable(digits = 2, 
+        col.names = c("Background Variables", "N", "Mean", "S.D", "N", "Mean", "S.D")) |>
+  kable_styling(full_width = FALSE) |>
+  add_header_above(c(" " = 1, "Control" = 3, "Treatment" = 3))
+  
+
+background_table
+```
+
+```{r first-stage}
+# estimating first stage 
+first_stage <- lm(received_cmto_services ~ treatment_group, data = data)
+
+summary(first_stage)
+
+# extracting the estimates 
+estimates_first_stage <- summary(first_stage) |>
+  coef() |>
+  round(2)
+```
+
+```{r intention-to-treat-in-high-opportunity-area}
+# estimating the itt without control variables
+itt_high_opp <- lm(leased_up_opp ~ treatment_group, data = data)
+
+summary(itt_high_opp)
+
+# extracting the estimates 
+estimates_itt <- summary(itt_high_opp) |>
+  coef() |>
+  round(2)
+
+# estimating itt with background variables
+itt_high_opp_background <- lm(leased_up_opp ~ treatment_group +
+                                origin_forecast_kravg30_p25 +
+                                hoh_age + child_count + child_age +
+                                speaks_english + born_abroad + working +
+                                homeless + hh_income + origin_pop2010 +
+                                black+ white + asian + latino + race_other +
+                                less_hs + college_plus, data = data)
+
+summary (itt_high_opp_background)
+
+# extracting the estimates 
+estimates_itt_background <- summary(itt_high_opp_background) |>
+  coef() |>
+  round(2)
+```
+
+```{r wald_estimate}
+# wald estimate
+wald_estimate = estimates_itt["treatment_group", "Estimate"]/ 
+  estimates_first_stage["treatment_group", "Estimate"]
+
+print(round(wald_estimate, 2))
+```
